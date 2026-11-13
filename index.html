@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SVG Quiz</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: #0f172a; color: #f1f5f9;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif; overflow: hidden; }
+  .screen { position: fixed; inset: 0; display: none; flex-direction: column;
+    align-items: center; justify-content: center; padding: 24px; text-align: center; gap: 20px; }
+  .screen.active { display: flex; }
+  p.sub { color: #94a3b8; }
+  button.start { padding: 16px 20px; font-size: 1.05rem; cursor: pointer; background: #38bdf8;
+    color: #0f172a; font-weight: 700; border: none; border-radius: 14px; }
+  /* SVG quiz */
+  #quiz { padding: 0; gap: 0; }
+  #stage { width: 100%; height: 100%; display: block; }
+  #stage text { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; text-anchor: middle;
+    fill: #f1f5f9; pointer-events: none; }
+  .title { font-size: 46px; font-weight: 800; }
+  .q { font-size: 36px; font-weight: 700; }
+  .sm { font-size: 22px; fill: #94a3b8 !important; }
+  .lbl { font-size: 26px; font-weight: 600; }
+  .btn { cursor: pointer; }
+  .btn rect { transition: .15s; }
+  .btn:hover rect { stroke: #38bdf8; fill: #243352; }
+  /* scare */
+  #scare { background: #000; padding: 0; gap: 0; }
+  #scare canvas { width: 100%; height: 100%; display: block; }
+  #scare.shake { animation: shake .06s infinite; }
+  @keyframes shake {
+    0% { transform: translate(8px, 6px); } 25% { transform: translate(-10px, -4px); }
+    50% { transform: translate(6px, -8px); } 75% { transform: translate(-6px, 10px); }
+    100% { transform: translate(10px, 4px); } }
+  #flash { position: fixed; inset: 0; background: #fff; opacity: 0; pointer-events: none; z-index: 5; }
+  #gotcha h1 { font-size: clamp(2.2rem, 8vw, 4rem); }
+</style>
+</head>
+<body>
+<div id="flash"></div>
+
+<section class="screen active" id="quiz">
+  <svg id="stage" viewBox="0 0 800 600" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#0f172a"/><stop offset="1" stop-color="#1e1b4b"/>
+      </linearGradient>
+    </defs>
+    <rect width="800" height="600" fill="url(#bg)"/>
+    <g id="layer"></g>
+  </svg>
+</section>
+
+<section class="screen" id="scare"><canvas id="face"></canvas></section>
+
+<section class="screen" id="gotcha">
+  <h1>Gotcha 😈</h1>
+  <p class="sub">It was just a prank. Hope your heart is still beating!</p>
+  <button class="start" id="again">Show it to someone else</button>
+</section>
+
+<script>
+const $ = id => document.getElementById(id);
+const show = id => {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  $(id).classList.add('active');
+};
+const layer = $('layer');
+
+// a = answers, c = index of the correct answer
+const questions = [
+  { q: "What does SVG stand for?", c: 0,
+    a: ["Scalable Vector Graphics", "Simple Vector Gradient", "Standard Visual Graphics", "Styled Vector Grid"] },
+  { q: "Which tag draws a circle?", c: 2,
+    a: ["&lt;round&gt;", "&lt;arc&gt;", "&lt;circle&gt;", "&lt;ball&gt;"] },
+  { q: "Which attribute sets the fill colour?", c: 1,
+    a: ["color", "fill", "paint", "background"] },
+  { q: "Which tag draws any custom shape?", c: 3,
+    a: ["&lt;shape&gt;", "&lt;draw&gt;", "&lt;line&gt;", "&lt;path&gt;"] }
+];
+let current = 0, locked = false;
+
+// ---- SVG icons ----
+const icons = {
+  circle: `<circle r="55" fill="#38bdf8"/><circle r="30" fill="#0f172a"/><circle r="12" fill="#f472b6"/>`,
+  rect: `<rect x="-55" y="-45" width="110" height="90" rx="12" fill="#f59e0b"/>
+    <rect x="-38" y="-28" width="76" height="56" rx="6" fill="none" stroke="#0f172a" stroke-width="4" stroke-dasharray="8 6"/>`,
+  polygon: `<polygon points="0,-60 17,-20 60,-18 27,10 38,52 0,28 -38,52 -27,10 -60,-18 -17,-20" fill="#a78bfa"/>`,
+  path: `<path d="M0 50 C-80 -10 -40 -70 0 -25 C40 -70 80 -10 0 50Z" fill="#f43f5e"/>`
+};
+function icon(name, x, y, s, delay) {
+  return `<g transform="translate(${x} ${y}) scale(${s})"><g>
+    <animateTransform attributeName="transform" type="translate" values="0 0;0 -10;0 0" dur="2s" begin="${delay}s" repeatCount="indefinite"/>
+    ${icons[name]}<text class="sm" y="100">&lt;${name}&gt;</text></g></g>`;
+}
+function button(id, x, y, w, h, label, fill) {
+  return `<g class="btn" id="${id}"><rect x="${x}" y="${y}" width="${w}" height="${h}" rx="20" fill="${fill || '#1e293b'}"
+    stroke="${fill ? 'none' : '#334155'}" stroke-width="3"/><text class="lbl" x="${x + w / 2}" y="${y + h / 2 + 9}"${fill ? ' style="fill:#0f172a"' : ''}>${label}</text></g>`;
+}
+function progress(frac) {
+  return `<rect x="150" y="36" width="500" height="12" rx="6" fill="#1e293b"/>
+    <rect x="150" y="36" width="${500 * frac}" height="12" rx="6" fill="#38bdf8" style="transition:width .4s"/>`;
+}
+
+// ---- screens ----
+function renderIntro() {
+  layer.innerHTML = `<text class="title" x="400" y="110">&lt;/&gt; SVG Quiz</text>
+    ${icon('circle', 160, 250, 1, 0)}${icon('rect', 330, 250, 1, .4)}
+    ${icon('polygon', 500, 250, 1, .8)}${icon('path', 670, 250, 1, 1.2)}
+    <text class="sm" x="400" y="415">4 quick questions. How well do you know SVG?</text>
+    ${button('startBtn', 270, 460, 260, 72, 'Start the quiz', '#38bdf8')}`;
+  $('startBtn').onclick = () => { current = 0; showQuestion(); };
+}
+
+function showQuestion() {
+  locked = false;
+  const q = questions[current], names = ['circle', 'rect', 'polygon', 'path'];
+  const pos = [[60, 200], [410, 200], [60, 320], [410, 320]];
+  layer.innerHTML = progress(current / questions.length) +
+    `<text class="sm" x="400" y="90">Question ${current + 1} of ${questions.length}</text>` +
+    `<text class="q" x="400" y="150">${q.q}</text>` +
+    q.a.map((t, i) => button('opt' + i, pos[i][0], pos[i][1], 330, 90, t)).join('') +
+    icon(names[current], 400, 500, .45, 0);
+  q.a.forEach((_, i) => { $('opt' + i).onclick = () => answer(i); });
+}
+
+function answer(i) {
+  if (locked) return;
+  locked = true;
+  const right = questions[current].c;
+  const mark = (idx, colour) => $('opt' + idx).querySelector('rect').setAttribute('fill', colour);
+  mark(right, '#15803d');
+  if (i !== right) mark(i, '#b91c1c');
+  setTimeout(nextQuestion, 700);
+}
+
+function nextQuestion() {
+  current++;
+  if (current < questions.length) { showQuestion(); return; }
+  // The last click is a user gesture, so the browser lets audio play from here on.
+  prepareAudio();
+  calculate();
+}
+
+function renderCalc() {
+  layer.innerHTML = progress(1) + `<g transform="translate(400 260)">
+      <circle r="48" fill="none" stroke="#1e293b" stroke-width="10"/>
+      <path d="M0 -48 A48 48 0 0 1 48 0" fill="none" stroke="#38bdf8" stroke-width="10" stroke-linecap="round">
+        <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="1s" repeatCount="indefinite"/>
+      </path></g>
+    <text class="q" id="calcText" x="400" y="390">Calculating your score...</text>`;
+}
+
+function calculate() {
+  renderCalc();
+  const lines = ["Calculating your score...", "Checking your answers...", "Almost there..."];
+  let i = 0;
+  const t = setInterval(() => { $('calcText').textContent = lines[++i % lines.length]; }, 1200);
+  setTimeout(() => {
+    clearInterval(t);
+    $('calcText').textContent = "Your score is ready!";
+    setTimeout(scare, 1500);
+  }, 3600);
+}
+
+$('again').onclick = () => location.reload();
+renderIntro();
+</script>
+
+<script>
+let ctx = null, drone = null, sfx = null;
+
+function prepareAudio() {
+  try { ctx = new (window.AudioContext || window.webkitAudioContext)(); ctx.resume(); } catch (e) { ctx = null; }
+  // optional: drop a real "scare.mp3" next to index.html and it will be used instead of the synth
+  sfx = new Audio('scare.mp3');
+  sfx.preload = 'auto';
+  sfx.addEventListener('error', () => { sfx = null; });
+  sfx.load();
+}
+
+function startDrone() {
+  if (!ctx) return;
+  const now = ctx.currentTime, g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, now);
+  g.gain.linearRampToValueAtTime(0.35, now + 1.3);
+  g.connect(ctx.destination);
+  const oscs = [55, 58.5, 110.7].map(f => {
+    const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.value = f;
+    o.connect(g); o.start(now); return o;
+  });
+  drone = oscs;
+}
+function stopDrone() { if (drone) { drone.forEach(o => { try { o.stop(); } catch (e) {} }); drone = null; } }
+
+function playScream(duration) {
+  if (!ctx) return;
+  const now = ctx.currentTime;
+  const master = ctx.createGain(); master.gain.value = 1;
+  const comp = ctx.createDynamicsCompressor();
+  comp.connect(master); master.connect(ctx.destination);
+
+  const shaper = ctx.createWaveShaper();
+  const curve = new Float32Array(256);
+  for (let i = 0; i < 256; i++) { const x = i / 128 - 1; curve[i] = Math.tanh(x * 6); }
+  shaper.curve = curve;
+  const dry = ctx.createGain(); dry.gain.value = 0.8;
+  shaper.connect(dry); dry.connect(comp);
+  // cave-like reverb from a decaying noise impulse
+  const irLen = Math.floor(ctx.sampleRate * 1.8);
+  const ir = ctx.createBuffer(2, irLen, ctx.sampleRate);
+  for (let c = 0; c < 2; c++) {
+    const d = ir.getChannelData(c);
+    for (let i = 0; i < irLen; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / irLen, 2.5);
+  }
+  const conv = ctx.createConvolver(), wet = ctx.createGain();
+  conv.buffer = ir; wet.gain.value = 0.45;
+  shaper.connect(conv); conv.connect(wet); wet.connect(comp);
+
+  // the SLAM: deep thump + noise crash
+  const th = ctx.createOscillator(), thg = ctx.createGain();
+  th.frequency.setValueAtTime(120, now); th.frequency.exponentialRampToValueAtTime(35, now + 0.5);
+  thg.gain.setValueAtTime(1.6, now); thg.gain.exponentialRampToValueAtTime(0.001, now + 0.6);
+  th.connect(thg); thg.connect(comp); th.start(now); th.stop(now + 0.6);
+  const nb = ctx.createBuffer(1, Math.floor(ctx.sampleRate * 0.5), ctx.sampleRate);
+  const nd = nb.getChannelData(0);
+  for (let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1;
+  const ns = ctx.createBufferSource(), lp = ctx.createBiquadFilter(), ng = ctx.createGain();
+  ns.buffer = nb; lp.type = 'lowpass';
+  lp.frequency.setValueAtTime(9000, now); lp.frequency.exponentialRampToValueAtTime(300, now + 0.4);
+  ng.gain.setValueAtTime(1, now); ng.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+  ns.connect(lp); lp.connect(ng); ng.connect(shaper); ns.start(now);
+
+  // deep "aaah" vocal tract
+  const voice = ctx.createGain();
+  [[700, 6], [1250, 8], [2600, 10]].forEach(([freq, q]) => {
+    const f = ctx.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = freq; f.Q.value = q;
+    voice.connect(f); f.connect(shaper);
+  });
+
+  // one demonic "ha": raspy growl (55Hz amplitude wobble) + an octave-down layer + breathy "h"
+  function ha(start, len, pitch, vibRate, vibDepth) {
+    const env = ctx.createGain();
+    env.gain.setValueAtTime(0.0001, start);
+    env.gain.linearRampToValueAtTime(1, start + 0.03);
+    env.gain.exponentialRampToValueAtTime(0.001, start + len);
+    const growl = ctx.createOscillator(), gg = ctx.createGain();
+    growl.frequency.value = 55; gg.gain.value = 0.4;
+    growl.connect(gg); gg.connect(env.gain);
+    growl.start(start); growl.stop(start + len);
+    env.connect(voice);
+    [0, 25, -1200].forEach(detune => {
+      const osc = ctx.createOscillator();
+      osc.type = 'sawtooth'; osc.detune.value = detune;
+      osc.frequency.setValueAtTime(pitch, start);
+      osc.frequency.exponentialRampToValueAtTime(pitch * 0.78, start + len);
+      const lfo = ctx.createOscillator(), lg = ctx.createGain();
+      lfo.frequency.value = vibRate; lg.gain.value = vibDepth;
+      lfo.connect(lg); lg.connect(osc.frequency);
+      osc.connect(env);
+      osc.start(start); lfo.start(start); osc.stop(start + len); lfo.stop(start + len);
+    });
+    const b = ctx.createBuffer(1, Math.floor(ctx.sampleRate * 0.07), ctx.sampleRate);
+    const d = b.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    const n = ctx.createBufferSource(), hp = ctx.createBiquadFilter(), g2 = ctx.createGain();
+    hp.type = 'highpass'; hp.frequency.value = 2200; g2.gain.value = 0.5;
+    n.buffer = b; n.connect(hp); hp.connect(g2); g2.connect(shaper); n.start(start);
+  }
+
+  // "heh-heh-heh-heh..." climbing, then a long "HAAAAA", then "ha-ha-ha"
+  let t = now + 0.12;
+  for (let i = 0; i < 7; i++) { ha(t, 0.18, 230 + i * 28, 9, 18); t += 0.27; }
+  ha(t, 1.1, 430, 12, 60); t += 1.15;
+  for (let i = 0; i < 3; i++) { ha(t, 0.16, 360 - i * 30, 9, 18); t += 0.24; }
+
+  master.gain.setValueAtTime(1, now + duration - 0.4);
+  master.gain.linearRampToValueAtTime(0, now + duration);
+}
+</script>
+
+<script>
+const canvas = $('face'), g = canvas.getContext('2d');
+let raf = null, slamAt = 0, t0 = 0;
+const rnd = i => { const x = Math.sin(i * 12.9898) * 43758.5453; return x - Math.floor(x); };
+
+function drawDark(e) {
+  const w = canvas.width = innerWidth, h = canvas.height = innerHeight;
+  g.fillStyle = '#000'; g.fillRect(0, 0, w, h);
+  const k = Math.min(e / 1400, 1);
+  g.shadowColor = '#f00'; g.shadowBlur = 25 * k; g.fillStyle = 'rgba(255,20,20,' + k + ')';
+  [-1, 1].forEach(side => {
+    g.beginPath(); g.arc(w / 2 + side * (20 + 25 * k), h / 2, 2 + 9 * k, 0, 7); g.fill();
+  });
+  g.shadowBlur = 0;
+}
+
+function drawHair(hx, hy, s, e) {
+  g.lineCap = 'round';
+  for (let i = 0; i < 80; i++) {
+    const a = Math.PI * (0.85 + rnd(i) * 1.3), wob = Math.sin(e / 90 + i) * s * .03;
+    const sx = hx + Math.cos(a) * s * .55, sy = hy - s * .1 + Math.sin(a) * s * .7;
+    g.strokeStyle = 'rgba(' + (150 + rnd(i + 9) * 90) + ',' + (150 + rnd(i + 9) * 90) + ',' + (150 + rnd(i + 9) * 90) + ',.65)';
+    g.lineWidth = s * (.008 + rnd(i + 3) * .016);
+    g.beginPath(); g.moveTo(sx, sy);
+    g.quadraticCurveTo(sx + Math.cos(a) * s * .5 + wob, sy + s * .2,
+      sx + Math.cos(a) * s * .4 + wob * 2, sy + s * (.6 + rnd(i + 5) * .8));
+    g.stroke();
+  }
+}
+
+function drawHat(hx, hy, s) {
+  g.fillStyle = '#050505'; g.strokeStyle = '#222'; g.lineWidth = s * .01;
+  g.beginPath(); g.moveTo(hx - s * .5, hy - s * .55);
+  g.quadraticCurveTo(hx - s * .1, hy - s * 1.2, hx + s * .35, hy - s * 1.75);
+  g.quadraticCurveTo(hx + s * .35, hy - s * 1.1, hx + s * .5, hy - s * .55); g.closePath(); g.fill(); g.stroke();
+  g.beginPath(); g.ellipse(hx, hy - s * .55, s * .95, s * .13, 0, 0, 7); g.fill(); g.stroke();
+  g.fillStyle = '#3a1a5a'; g.fillRect(hx - s * .5, hy - s * .66, s, s * .08);
+}
+
+function drawFace(e) {
+  const w = canvas.width = innerWidth, h = canvas.height = innerHeight;
+  const zt = Math.min(e / 150, 1), ease = 1 - Math.pow(1 - zt, 3);
+  const zoom = 0.25 + 0.9 * ease + e * 0.00008;
+  const s = Math.min(w, h) * 0.38 * zoom;
+  const hx = w / 2 + (Math.random() - .5) * 12, hy = h * 0.55 + (Math.random() - .5) * 12;
+
+  g.fillStyle = Math.random() < .12 ? '#2a0000' : '#000'; g.fillRect(0, 0, w, h);
+  drawHair(hx, hy, s, e);
+
+  // long pointed chin + face
+  const grad = g.createRadialGradient(hx, hy - s * .1, s * .1, hx, hy, s * .8);
+  grad.addColorStop(0, '#a9c493'); grad.addColorStop(1, '#2b3a25');
+  g.fillStyle = grad;
+  g.beginPath(); g.ellipse(hx, hy, s * .55, s * .72, 0, 0, 7); g.fill();
+  g.beginPath(); g.moveTo(hx - s * .2, hy + s * .55); g.lineTo(hx, hy + s * 1.0); g.lineTo(hx + s * .2, hy + s * .55); g.fill();
+  drawHat(hx, hy, s);
+
+  // hollow cheeks
+  g.fillStyle = 'rgba(0,0,0,.4)';
+  [-1, 1].forEach(sd => { g.beginPath(); g.ellipse(hx + sd * s * .33, hy + s * .22, s * .1, s * .2, sd * .3, 0, 7); g.fill(); });
+
+  // glowing eyes with slit pupils
+  [-1, 1].forEach(sd => {
+    const ex = hx + sd * s * .23, ey = hy - s * .2;
+    g.fillStyle = '#000';
+    g.beginPath(); g.ellipse(ex, ey, s * .16, s * .1, sd * .35, 0, 7); g.fill();
+    g.shadowColor = '#ff0'; g.shadowBlur = s * .1; g.fillStyle = '#fff04a';
+    g.beginPath(); g.ellipse(ex, ey, s * .085, s * .06, sd * .35, 0, 7); g.fill();
+    g.shadowBlur = 0; g.fillStyle = '#000';
+    g.beginPath(); g.ellipse(ex, ey, s * .012, s * .055, 0, 0, 7); g.fill();
+    g.strokeStyle = '#000'; g.lineWidth = s * .045; g.lineCap = 'round';
+    g.beginPath(); g.moveTo(hx + sd * s * .42, hy - s * .4); g.lineTo(hx + sd * s * .07, hy - s * .27); g.stroke();
+  });
+
+  // hooked nose + wart
+  g.fillStyle = '#6e8a5c'; g.strokeStyle = '#000'; g.lineWidth = s * .01;
+  g.beginPath(); g.moveTo(hx - s * .03, hy - s * .15);
+  g.quadraticCurveTo(hx + s * .13, hy + s * .1, hx + s * .02, hy + s * .2);
+  g.quadraticCurveTo(hx - s * .02, hy + s * .15, hx - s * .07, hy + s * .2);
+  g.quadraticCurveTo(hx - s * .02, hy + s * .05, hx - s * .03, hy - s * .15); g.fill(); g.stroke();
+  g.fillStyle = '#4b3524'; g.beginPath(); g.arc(hx + s * .06, hy + s * .1, s * .02, 0, 7); g.fill();
+
+  // cackling mouth, jaw shaking
+  const jaw = s * (.2 + .06 * Math.abs(Math.sin(e / 55))), my = hy + s * .33;
+  g.fillStyle = '#100000';
+  g.beginPath(); g.moveTo(hx - s * .3, my); g.quadraticCurveTo(hx, my + s * .06, hx + s * .3, my);
+  g.quadraticCurveTo(hx, my + jaw * 1.6, hx - s * .3, my); g.fill();
+  g.fillStyle = '#e0d27a';
+  for (let i = 0; i < 9; i++) {
+    const tx = hx - s * .27 + i * s * .0675, th = s * (.05 + rnd(i + 20) * .05);
+    g.beginPath(); g.moveTo(tx, my + s * .02); g.lineTo(tx + s * .035, my + s * .02); g.lineTo(tx + s * .017, my + s * .02 + th); g.fill();
+    if (i % 2) { const by = my + jaw * 1.2;
+      g.beginPath(); g.moveTo(tx, by); g.lineTo(tx + s * .035, by); g.lineTo(tx + s * .017, by - th * .8); g.fill(); }
+  }
+
+  // vignette, static, glitches
+  const v = g.createRadialGradient(w / 2, h / 2, Math.min(w, h) * .25, w / 2, h / 2, Math.max(w, h) * .75);
+  v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(1, 'rgba(60,0,0,.9)');
+  g.fillStyle = v; g.fillRect(0, 0, w, h);
+  g.fillStyle = 'rgba(255,255,255,.18)';
+  for (let i = 0; i < 350; i++) g.fillRect(Math.random() * w, Math.random() * h, 2, 2);
+  if (Math.random() < .12) { g.fillStyle = 'rgba(255,0,0,.2)'; g.fillRect(0, Math.random() * h, w, 10 + Math.random() * 30); }
+  if (Math.random() < .05) {
+    g.globalCompositeOperation = 'difference'; g.fillStyle = '#fff'; g.fillRect(0, 0, w, h);
+    g.globalCompositeOperation = 'source-over';
+  }
+}
+
+function loop(now) {
+  if (now < slamAt) drawDark(now - t0); else drawFace(now - slamAt);
+  raf = requestAnimationFrame(loop);
+}
+
+function slam() {
+  stopDrone();
+  $('scare').classList.add('shake');
+  if (sfx) { sfx.currentTime = 0; sfx.volume = 1; sfx.play().catch(() => playScream(4.2)); }
+  else playScream(4.2);
+  if (navigator.vibrate) navigator.vibrate([300, 80, 300, 80, 600]);
+  const f = $('flash');
+  [0, 140, 300].forEach(d => setTimeout(() => { f.style.opacity = .95; setTimeout(() => f.style.opacity = 0, 60); }, d));
+}
+
+function scare() {
+  show('scare');
+  t0 = performance.now(); slamAt = t0 + 1400;
+  startDrone();
+  raf = requestAnimationFrame(loop);
+  setTimeout(slam, 1400);
+  setTimeout(() => {
+    cancelAnimationFrame(raf);
+    if (sfx) sfx.pause();
+    $('scare').classList.remove('shake');
+    show('gotcha');
+  }, 1400 + 4600);
+}
+</script>
+</body>
+</html>
